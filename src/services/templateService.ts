@@ -2,14 +2,21 @@ import prisma from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
 
 export class TemplateService {
+  private resolvePath(obj: Record<string, any>, path: string): any {
+    return path.split('.').reduce((current, key) => {
+      return current !== undefined && current !== null ? current[key] : undefined;
+    }, obj as any);
+  }
+
   renderTemplate(content: string, variables: Record<string, any>): string {
-    return content.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-      return variables[key] !== undefined ? String(variables[key]) : `{{${key}}}`;
+    return content.replace(/\{\{([\w.]+)\}\}/g, (_, key) => {
+      const value = this.resolvePath(variables, key);
+      return value !== undefined ? String(value) : `{{${key}}}`;
     });
   }
 
   extractVariables(content: string): string[] {
-    const matches = content.match(/\{\{(\w+)\}\}/g);
+    const matches = content.match(/\{\{([\w.]+)\}\}/g);
     if (!matches) return [];
     const variables = new Set<string>();
     matches.forEach((match) => {
