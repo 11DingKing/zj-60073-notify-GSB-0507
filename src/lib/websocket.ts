@@ -52,7 +52,6 @@ class WebSocketManager {
 
     ws.on('error', (error) => {
       console.error(`WebSocket 错误 (用户 ${userId}):`, error);
-      this.handleDisconnect(ws, userId);
     });
   }
 

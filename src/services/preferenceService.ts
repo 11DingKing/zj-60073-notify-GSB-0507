@@ -118,7 +118,7 @@ export class PreferenceService {
     userId: string,
     channelId: string,
     notificationType: string
-  ): Promise<{ canSend: boolean; reason?: string }> {
+  ): Promise<{ canSend: boolean; reason?: string; quietEnd?: string }> {
     const preference = await this.getPreference(userId, channelId, notificationType);
 
     if (!preference) {
@@ -130,7 +130,7 @@ export class PreferenceService {
     }
 
     if (await this.isInQuietTime(preference)) {
-      return { canSend: false, reason: '用户处于免打扰时段' };
+      return { canSend: false, reason: '用户处于免打扰时段', quietEnd: preference.quietEnd || undefined };
     }
 
     return { canSend: true };
