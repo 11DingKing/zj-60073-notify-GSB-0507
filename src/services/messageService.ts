@@ -1,11 +1,12 @@
-import { MessageStatus, RetryStrategy, ChannelType } from '@prisma/client';
-import prisma from '../lib/prisma';
-import { AppError } from '../middleware/errorHandler';
-import { templateService } from './templateService';
-import { channelService } from './channelService';
-import { SenderFactory } from './sender/SenderFactory';
-import { env } from '../config/env';
-import { wsManager } from '../lib/websocket';
+import { MessageStatus, RetryStrategy, ChannelType } from "@prisma/client";
+import prisma from "../lib/prisma";
+import { AppError } from "../middleware/errorHandler";
+import { templateService } from "./templateService";
+import { channelService } from "./channelService";
+import { SenderFactory } from "./sender/SenderFactory";
+import { env } from "../config/env";
+import { wsManager } from "../lib/websocket";
+import { preferenceService } from "./preferenceService";
 
 interface SendSingleOptions {
   templateCode?: string;
@@ -21,7 +22,10 @@ interface SendSingleOptions {
   retryInterval?: number;
 }
 
-interface SendBatchOptions extends Omit<SendSingleOptions, 'recipient' | 'recipientId'> {
+interface SendBatchOptions extends Omit<
+  SendSingleOptions,
+  "recipient" | "recipientId"
+> {
   recipients: Array<{
     recipient: string;
     recipientId?: string;
@@ -41,17 +45,20 @@ export class MessageService {
       variables,
       priority = 0,
       maxRetryCount = env.MAX_RETRY_COUNT,
-      retryStrategy = env.RETRY_STRATEGY === 'exponential' ? RetryStrategy.EXPONENTIAL : RetryStrategy.FIXED,
+      retryStrategy = env.RETRY_STRATEGY === "exponential"
+        ? RetryStrategy.EXPONENTIAL
+        : RetryStrategy.FIXED,
       retryInterval = env.RETRY_INTERVAL,
     } = options;
 
-    let targetChannels: Array<{ channelId: string; channelType: ChannelType }> = [];
+    let targetChannels: Array<{ channelId: string; channelType: ChannelType }> =
+      [];
 
     if (templateCode) {
       const template = await templateService.getTemplateByCode(templateCode);
 
       if (!template.isEnabled) {
-        throw new AppError('模板已禁用', 400);
+        throw new AppError("模板已禁用", 400);
       }
 
       targetChannels = template.channels
@@ -62,40 +69,44 @@ export class MessageService {
         }));
 
       if (targetChannels.length === 0) {
-        throw new AppError('模板未绑定有效的启用渠道', 400);
+        throw new AppError("模板未绑定有效的启用渠道", 400);
       }
     } else if (channelType && content) {
       const channels = await channelService.listChannels(channelType, true);
       if (channels.length === 0) {
-        throw new AppError('没有可用的启用渠道', 404);
+        throw new AppError("没有可用的启用渠道", 404);
       }
       targetChannels = channels.map((c) => ({
         channelId: c.id,
         channelType: c.type,
       }));
     } else {
-      throw new AppError('必须提供 templateCode 或 channelType + content', 400);
+      throw new AppError("必须提供 templateCode 或 channelType + content", 400);
     }
 
     const messages = [];
+    const template = templateCode
+      ? await templateService.getTemplateByCode(templateCode)
+      : null;
+    const notificationType = template?.type || "default";
 
     for (const { channelId, channelType } of targetChannels) {
       let finalSubject = subject;
       let finalContent = content;
 
-      if (templateCode) {
-        const template = await templateService.getTemplateByCode(templateCode);
+      if (template) {
         finalSubject = template.subject
           ? templateService.renderTemplate(template.subject, variables)
           : undefined;
-        finalContent = templateService.renderTemplate(template.content, variables);
+        finalContent = templateService.renderTemplate(
+          template.content,
+          variables,
+        );
       }
 
       const message = await prisma.message.create({
         data: {
-          templateId: templateCode
-            ? (await templateService.getTemplateByCode(templateCode)).id
-            : null,
+          templateId: template?.id || null,
           channelId,
           recipient,
           recipientId,
@@ -111,6 +122,28 @@ export class MessageService {
       });
 
       messages.push(message);
+
+      if (
+        recipientId &&
+        (channelType === ChannelType.IN_APP ||
+          channelType === ChannelType.EMAIL)
+      ) {
+        const checkResult = await preferenceService.checkCanSend(
+          recipientId,
+          channelId,
+          notificationType,
+        );
+
+        if (!checkResult.canSend && checkResult.delayMs) {
+          console.log(
+            `消息 ${message.id} 处于免打扰时段，延迟 ${checkResult.delayMs}ms 后发送`,
+          );
+          setTimeout(() => {
+            this.processMessage(message.id);
+          }, checkResult.delayMs);
+          continue;
+        }
+      }
 
       this.processMessage(message.id);
     }
@@ -160,7 +193,10 @@ export class MessageService {
       return;
     }
 
-    if (message.status !== MessageStatus.PENDING && message.status !== MessageStatus.RETRY) {
+    if (
+      message.status !== MessageStatus.PENDING &&
+      message.status !== MessageStatus.RETRY
+    ) {
       console.log(`消息状态不是待处理: ${message.status}`);
       return;
     }
@@ -172,7 +208,7 @@ export class MessageService {
 
     try {
       if (!message.channel) {
-        throw new Error('渠道不存在');
+        throw new Error("渠道不存在");
       }
 
       if (message.channel.type === ChannelType.IN_APP) {
@@ -185,10 +221,12 @@ export class MessageService {
         return;
       }
 
-      const providers = await channelService.getEnabledProviders(message.channel.id);
+      const providers = await channelService.getEnabledProviders(
+        message.channel.id,
+      );
 
       if (providers.length === 0) {
-        throw new Error('该渠道没有可用的供应商');
+        throw new Error("该渠道没有可用的供应商");
       }
 
       const result = await SenderFactory.sendWithProvider(
@@ -200,7 +238,7 @@ export class MessageService {
           content: message.content,
           variables: message.variables as Record<string, any>,
         },
-        providers
+        providers,
       );
 
       if (result.success) {
@@ -237,7 +275,7 @@ export class MessageService {
         where: { id: message.id },
         data: {
           status: MessageStatus.FAILED,
-          errorMessage: '站内信发送需要 recipientId',
+          errorMessage: "站内信发送需要 recipientId",
         },
       });
       console.log(`站内信发送失败: ${message.id}，缺少 recipientId`);
@@ -248,7 +286,7 @@ export class MessageService {
       data: {
         userId,
         messageId: message.id,
-        title: message.subject || '站内消息',
+        title: message.subject || "站内消息",
         content: message.content,
         isRead: false,
       },
@@ -285,7 +323,7 @@ export class MessageService {
         where: { id: message.id },
         data: {
           status: MessageStatus.FAILED,
-          errorMessage: 'WebSocket 发送需要 recipientId',
+          errorMessage: "WebSocket 发送需要 recipientId",
         },
       });
       console.log(`WebSocket 发送失败: ${message.id}，缺少 recipientId`);
@@ -294,7 +332,7 @@ export class MessageService {
 
     if (wsManager.isUserConnected(userId)) {
       const result = await wsManager.sendToUser(userId, {
-        type: 'push',
+        type: "push",
         data: {
           title: message.subject,
           content: message.content,
@@ -322,7 +360,7 @@ export class MessageService {
       data: {
         userId,
         messageId: message.id,
-        title: message.subject || '推送消息',
+        title: message.subject || "推送消息",
         content: message.content,
         isRead: false,
       },
@@ -378,10 +416,16 @@ export class MessageService {
       this.processMessage(messageId);
     }, delay);
 
-    console.log(`消息将在 ${delay}ms 后重试: ${messageId}，第 ${newRetryCount} 次重试`);
+    console.log(
+      `消息将在 ${delay}ms 后重试: ${messageId}，第 ${newRetryCount} 次重试`,
+    );
   }
 
-  private calculateDelay(message: { retryCount: number; retryStrategy: RetryStrategy; retryInterval: number }): number {
+  private calculateDelay(message: {
+    retryCount: number;
+    retryStrategy: RetryStrategy;
+    retryInterval: number;
+  }): number {
     if (message.retryStrategy === RetryStrategy.EXPONENTIAL) {
       const base = env.RETRY_EXPONENTIAL_BASE;
       return message.retryInterval * Math.pow(base, message.retryCount);
@@ -437,7 +481,7 @@ export class MessageService {
         },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
     ]);
 
@@ -464,7 +508,7 @@ export class MessageService {
     });
 
     if (!message) {
-      throw new AppError('消息不存在', 404);
+      throw new AppError("消息不存在", 404);
     }
 
     return message;
@@ -476,11 +520,11 @@ export class MessageService {
     });
 
     if (!message) {
-      throw new AppError('消息不存在', 404);
+      throw new AppError("消息不存在", 404);
     }
 
     if (message.status !== MessageStatus.FAILED) {
-      throw new AppError('只有失败状态的消息才能重试', 400);
+      throw new AppError("只有失败状态的消息才能重试", 400);
     }
 
     await prisma.message.update({

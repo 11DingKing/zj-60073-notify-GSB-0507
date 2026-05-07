@@ -1,15 +1,28 @@
-import prisma from '../lib/prisma';
-import { AppError } from '../middleware/errorHandler';
+import prisma from "../lib/prisma";
+import { AppError } from "../middleware/errorHandler";
 
 export class TemplateService {
+  private getValueByPath(obj: Record<string, any>, path: string): any {
+    const parts = path.split(".");
+    let value: any = obj;
+    for (const part of parts) {
+      if (value === null || value === undefined) {
+        return undefined;
+      }
+      value = value[part];
+    }
+    return value;
+  }
+
   renderTemplate(content: string, variables: Record<string, any>): string {
-    return content.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-      return variables[key] !== undefined ? String(variables[key]) : `{{${key}}}`;
+    return content.replace(/\{\{([\w.]+)\}\}/g, (_, key) => {
+      const value = this.getValueByPath(variables, key);
+      return value !== undefined ? String(value) : `{{${key}}}`;
     });
   }
 
   extractVariables(content: string): string[] {
-    const matches = content.match(/\{\{(\w+)\}\}/g);
+    const matches = content.match(/\{\{([\w.]+)\}\}/g);
     if (!matches) return [];
     const variables = new Set<string>();
     matches.forEach((match) => {
@@ -29,7 +42,7 @@ export class TemplateService {
           },
         },
         versions: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: { createdAt: "desc" },
         },
       },
     });
@@ -76,7 +89,7 @@ export class TemplateService {
         },
         versions: {
           create: {
-            version: '1.0.0',
+            version: "1.0.0",
             subject: data.subject,
             content: data.content,
             variables,
@@ -103,26 +116,27 @@ export class TemplateService {
       content?: string;
       isEnabled?: boolean;
       channelIds?: string[];
-    }
+    },
   ) {
     const template = await prisma.template.findUnique({
       where: { id },
       include: {
         channels: true,
         versions: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: { createdAt: "desc" },
           take: 1,
         },
       },
     });
 
     if (!template) {
-      throw new AppError('模板不存在', 404);
+      throw new AppError("模板不存在", 404);
     }
 
     const updateData: any = {};
     if (data.name !== undefined) updateData.name = data.name;
-    if (data.description !== undefined) updateData.description = data.description;
+    if (data.description !== undefined)
+      updateData.description = data.description;
     if (data.isEnabled !== undefined) updateData.isEnabled = data.isEnabled;
 
     let newVersionNeeded = false;
@@ -144,9 +158,9 @@ export class TemplateService {
 
       if (newVersionNeeded) {
         const lastVersion = template.versions?.[0];
-        const versionParts = (lastVersion?.version || '1.0.0').split('.');
-        versionParts[2] = String(parseInt(versionParts[2] || '0') + 1);
-        const newVersion = versionParts.join('.');
+        const versionParts = (lastVersion?.version || "1.0.0").split(".");
+        versionParts[2] = String(parseInt(versionParts[2] || "0") + 1);
+        const newVersion = versionParts.join(".");
 
         await tx.templateVersion.create({
           data: {
@@ -161,8 +175,12 @@ export class TemplateService {
 
       if (data.channelIds) {
         const currentChannelIds = template.channels.map((c) => c.channelId);
-        const toRemove = currentChannelIds.filter((cid) => !data.channelIds!.includes(cid));
-        const toAdd = data.channelIds.filter((cid) => !currentChannelIds.includes(cid));
+        const toRemove = currentChannelIds.filter(
+          (cid) => !data.channelIds!.includes(cid),
+        );
+        const toAdd = data.channelIds.filter(
+          (cid) => !currentChannelIds.includes(cid),
+        );
 
         if (toRemove.length > 0) {
           await tx.templateChannel.deleteMany({
@@ -219,7 +237,7 @@ export class TemplateService {
         },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
     ]);
 
@@ -240,7 +258,7 @@ export class TemplateService {
     });
 
     if (!template) {
-      throw new AppError('模板不存在', 404);
+      throw new AppError("模板不存在", 404);
     }
 
     return prisma.template.update({
@@ -249,7 +267,10 @@ export class TemplateService {
     });
   }
 
-  async getTemplateVersions(templateId: string, params: { page?: number; pageSize?: number } = {}) {
+  async getTemplateVersions(
+    templateId: string,
+    params: { page?: number; pageSize?: number } = {},
+  ) {
     const { page = 1, pageSize = 20 } = params;
 
     const template = await prisma.template.findUnique({
@@ -257,7 +278,7 @@ export class TemplateService {
     });
 
     if (!template) {
-      throw new AppError('模板不存在', 404);
+      throw new AppError("模板不存在", 404);
     }
 
     const [total, versions] = await Promise.all([
@@ -268,7 +289,7 @@ export class TemplateService {
         where: { templateId },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
     ]);
 

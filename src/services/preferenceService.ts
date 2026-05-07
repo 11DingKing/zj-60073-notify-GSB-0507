@@ -1,5 +1,5 @@
-import prisma from '../lib/prisma';
-import { AppError } from '../middleware/errorHandler';
+import prisma from "../lib/prisma";
+import { AppError } from "../middleware/errorHandler";
 
 export class PreferenceService {
   async getPreferences(userId: string) {
@@ -11,7 +11,11 @@ export class PreferenceService {
     });
   }
 
-  async getPreference(userId: string, channelId: string, notificationType: string) {
+  async getPreference(
+    userId: string,
+    channelId: string,
+    notificationType: string,
+  ) {
     return prisma.userPreference.findUnique({
       where: {
         userId_channelId_notificationType: {
@@ -39,7 +43,7 @@ export class PreferenceService {
     });
 
     if (!channel) {
-      throw new AppError('渠道不存在', 404);
+      throw new AppError("渠道不存在", 404);
     }
 
     return prisma.userPreference.upsert({
@@ -69,13 +73,16 @@ export class PreferenceService {
     });
   }
 
-  async batchSetPreferences(userId: string, preferences: Array<{
-    channelId: string;
-    notificationType: string;
-    isEnabled?: boolean;
-    quietStart?: string;
-    quietEnd?: string;
-  }>) {
+  async batchSetPreferences(
+    userId: string,
+    preferences: Array<{
+      channelId: string;
+      notificationType: string;
+      isEnabled?: boolean;
+      quietStart?: string;
+      quietEnd?: string;
+    }>,
+  ) {
     const results = [];
 
     for (const pref of preferences) {
@@ -93,7 +100,10 @@ export class PreferenceService {
     return results;
   }
 
-  async isInQuietTime(preference: { quietStart?: string; quietEnd?: string }): boolean {
+  async isInQuietTime(preference: {
+    quietStart?: string | null;
+    quietEnd?: string | null;
+  }): Promise<boolean> {
     if (!preference.quietStart || !preference.quietEnd) {
       return false;
     }
@@ -101,8 +111,8 @@ export class PreferenceService {
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const [startHour, startMin] = preference.quietStart.split(':').map(Number);
-    const [endHour, endMin] = preference.quietEnd.split(':').map(Number);
+    const [startHour, startMin] = preference.quietStart.split(":").map(Number);
+    const [endHour, endMin] = preference.quietEnd.split(":").map(Number);
 
     const startMinutes = startHour * 60 + startMin;
     const endMinutes = endHour * 60 + endMin;
@@ -117,26 +127,49 @@ export class PreferenceService {
   async checkCanSend(
     userId: string,
     channelId: string,
-    notificationType: string
-  ): Promise<{ canSend: boolean; reason?: string }> {
-    const preference = await this.getPreference(userId, channelId, notificationType);
+    notificationType: string,
+  ): Promise<{ canSend: boolean; reason?: string; delayMs?: number }> {
+    const preference = await this.getPreference(
+      userId,
+      channelId,
+      notificationType,
+    );
 
     if (!preference) {
       return { canSend: true };
     }
 
     if (!preference.isEnabled) {
-      return { canSend: false, reason: '用户已禁用该渠道' };
+      return { canSend: false, reason: "用户已禁用该渠道" };
     }
 
     if (await this.isInQuietTime(preference)) {
-      return { canSend: false, reason: '用户处于免打扰时段' };
+      const delayMs = this.calculateDelayUntilQuietEnd(preference.quietEnd!);
+      return { canSend: false, reason: "用户处于免打扰时段", delayMs };
     }
 
     return { canSend: true };
   }
 
-  async deletePreference(userId: string, channelId: string, notificationType: string) {
+  calculateDelayUntilQuietEnd(quietEnd: string): number {
+    const now = new Date();
+    const [endHour, endMin] = quietEnd.split(":").map(Number);
+
+    const endTime = new Date();
+    endTime.setHours(endHour, endMin, 0, 0);
+
+    if (endTime <= now) {
+      endTime.setDate(endTime.getDate() + 1);
+    }
+
+    return endTime.getTime() - now.getTime();
+  }
+
+  async deletePreference(
+    userId: string,
+    channelId: string,
+    notificationType: string,
+  ) {
     const preference = await prisma.userPreference.findUnique({
       where: {
         userId_channelId_notificationType: {
@@ -148,7 +181,7 @@ export class PreferenceService {
     });
 
     if (!preference) {
-      throw new AppError('偏好设置不存在', 404);
+      throw new AppError("偏好设置不存在", 404);
     }
 
     return prisma.userPreference.delete({
