@@ -109,12 +109,16 @@ class WebSocketManager {
     const message = JSON.stringify(data);
     let sent = false;
 
-    userSockets.forEach((ws) => {
+    for (const ws of userSockets) {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(message);
-        sent = true;
+        try {
+          ws.send(message);
+          sent = true;
+        } catch (error) {
+          console.error(`发送消息到 WebSocket 失败:`, error);
+        }
       }
-    });
+    }
 
     return sent;
   }
